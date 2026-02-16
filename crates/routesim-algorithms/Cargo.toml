@@ -1,0 +1,12 @@
+[package]
+name = "routesim-algorithms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Built-in routing algorithms for RouteSim LLM load balancer simulator"
+
+[dependencies]
+serde = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+tracing = { workspace = true }

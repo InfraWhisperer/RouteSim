@@ -1,0 +1,45 @@
+[package]
+name = "routesim-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core discrete-event simulation engine for LLM inference load balancing"
+
+[[bin]]
+name = "routesim"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+clap = { workspace = true }
+csv = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+routesim-algorithms = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "simulation_bench"
+harness = false
+
+[[test]]
+name = "test_engine"
+path = "../../tests/rust/test_engine.rs"
+
+[[test]]
+name = "test_kv_cache"
+path = "../../tests/rust/test_kv_cache.rs"
+
+[[test]]
+name = "test_algorithms"
+path = "../../tests/rust/test_algorithms.rs"
+
+[[test]]
+name = "test_trace_ingestion"
+path = "../../tests/rust/test_trace_ingestion.rs"

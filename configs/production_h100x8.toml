@@ -1,0 +1,25 @@
+# RouteSim Production Configuration
+# 8x H100 SXM cluster — typical production serving setup
+
+[simulation]
+name = "h100x8-production"
+seed = 42
+warmup_requests = 100
+
+[cluster]
+gpu_type = "H100Sxm"
+num_backends = 8
+max_batch_tokens = 16384
+max_queue_depth = 256
+kv_cache_blocks = 32768
+kv_block_size = 16
+
+[cluster.compute_model]
+prefill_tokens_per_sec = 50000
+decode_tokens_per_sec_batch1 = 80
+decode_throughput_saturation_batch = 64
+decode_tokens_per_sec_saturated = 3200
+
+[trace]
+format = "compact_jsonl"
+path = "traces/example_trace.jsonl"
