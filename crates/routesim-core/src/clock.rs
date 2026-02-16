@@ -49,10 +49,10 @@ impl SimClock {
     ///
     /// # Panics
     ///
-    /// Panics in debug mode if `ms` is in the past.
+    /// Panics if `ms` is in the past.
     pub fn advance_to_ms(&mut self, ms: u64) {
         let target_us = ms * 1000;
-        debug_assert!(
+        assert!(
             target_us >= self.current_us,
             "Cannot move clock backwards: current={}us, target={}us",
             self.current_us,
@@ -63,7 +63,7 @@ impl SimClock {
 
     /// Advance the clock to a specific time in microseconds.
     pub fn advance_to_us(&mut self, us: u64) {
-        debug_assert!(
+        assert!(
             us >= self.current_us,
             "Cannot move clock backwards: current={}us, target={}us",
             self.current_us,

@@ -57,17 +57,28 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Create virtualenv
+        run: python -m venv .venv
+
       - name: Install maturin
-        run: pip install maturin[patchelf]
+        run: |
+          source .venv/bin/activate
+          pip install maturin[patchelf]
 
       - name: Build Python package
-        run: maturin develop --release
+        run: |
+          source .venv/bin/activate
+          maturin develop --release
 
       - name: Install test dependencies
-        run: pip install pytest click
+        run: |
+          source .venv/bin/activate
+          pip install pytest click
 
       - name: Run Python tests
-        run: pytest tests/python/ -v
+        run: |
+          source .venv/bin/activate
+          pytest tests/python/ -v
 
   bench:
     name: Benchmarks
