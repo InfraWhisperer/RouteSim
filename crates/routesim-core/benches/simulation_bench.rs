@@ -14,6 +14,7 @@ fn sample_requests(n: usize) -> Vec<InferenceRequest> {
             actual_gen_tokens: 64,
             prefix_hash: Some((i % 10) as u64),
             prefix_token_length: Some(128),
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,
