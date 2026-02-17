@@ -17,7 +17,7 @@ Testing routing strategies on real GPU clusters is expensive and slow. RouteSim 
 - **Replay production traces** to validate new strategies before deployment
 - **Simulate KV cache dynamics** including prefix caching and eviction
 - **Model different topologies** including prefill/decode disaggregation
-- **Prototype custom algorithms** in Python with a simple API
+- **Prototype custom algorithms** in Rust with a simple trait-based API
 
 ## Quickstart
 
@@ -51,32 +51,47 @@ routesim compare --config configs/production_h100x8.toml \
 
 | Algorithm | Strategy | Best For | Complexity |
 |-----------|----------|----------|------------|
-| `round_robin` | Cycle through backends | Uniform workloads, baseline | O(1) |
+| `round_robin` | Cycle through backends | Uniform workloads, baseline | O(n) |
 | `least_outstanding` | Fewest queued + active requests | Variable request sizes | O(n) |
 | `least_kv` | Lowest KV cache utilization | Memory-constrained clusters | O(n) |
 | `prefix_aware` | Maximize KV cache hits | Shared system prompts | O(n) |
 | `session_affinity` | Sticky sessions per conversation | Multi-turn chat | O(1) amortized |
 | `cost_escalation` | Dynamic cost model with decay | Complex/mixed workloads | O(n) |
+| `prefix_overlap` | Block-level KV cache overlap | Mooncake/SGLang traces | O(n*b) |
 
-## Write Your Own Algorithm
+## Real-World Traces: Mooncake
 
-### Python
+RouteSim supports [Mooncake](https://github.com/kvcache-ai/Mooncake) production traces from Moonshot AI's Kimi chatbot (FAST 2025 Best Paper). These traces include block-level KV cache hashes (`hash_ids`), enabling realistic prefix-cache-aware routing simulation.
 
-```python
-import routesim
+```bash
+# Download Mooncake traces
+bash scripts/download_mooncake_traces.sh
 
-class MyRouter(routesim.Algorithm):
-    def route(self, request, backends, clock_ms):
-        # Find backend with highest prefix cache hit probability
-        best = max(backends, key=lambda b: (
-            request.prefix_hash in b.prefix_hashes_cached,
-            -b.queue_depth,
-            -b.kv_cache_utilization,
-        ))
-        return routesim.Route(best.id)
+# Compare routing algorithms on Mooncake data
+routesim compare -c configs/mooncake_demo.toml \
+                 -t traces/mooncake_sample.jsonl \
+                 -A round_robin,least_outstanding,prefix_aware,prefix_overlap
+
+# Analyze trace characteristics (no RouteSim needed)
+python examples/mooncake_trace_stats.py traces/mooncake_sample.jsonl
 ```
 
-### Rust
+The `prefix_overlap` algorithm exploits block-level cache overlap (like SGLang's RadixAttention and Mooncake's scheduler) rather than single-prefix matching:
+
+```
+score = cache_weight * |req.blocks ∩ backend.cached_blocks| / |req.blocks|
+      + (1 - cache_weight) * (1 - load_ratio)
+```
+
+### Supported Trace Formats
+
+| Format | Description | Key Fields |
+|--------|-------------|------------|
+| `compact_jsonl` | RouteSim native format | `ts`, `prompt_tokens`, `gen_tokens`, `prefix_hash` |
+| `mooncake` | Mooncake production traces | `timestamp`, `input_length`, `output_length`, `hash_ids` |
+| `otel` | OpenTelemetry spans | Standard OTEL span format |
+
+## Write Your Own Algorithm
 
 Implement the `RoutingAlgorithm` trait in `crates/routesim-algorithms/`:
 
@@ -135,13 +150,14 @@ routesim run -c config.toml -t trace.jsonl -a prefix_aware
 routesim compare -c config.toml -t trace.jsonl -A round_robin,prefix_aware
 
 # Generate synthetic trace
-routesim gen-trace --generator poisson --rate 100 --duration 300 -o trace.jsonl
+routesim gen-trace --rate 100 --duration 300 -o trace.jsonl
 
 # Sweep request rates
 routesim sweep -c config.toml -a prefix_aware --rates 50,100,150,200
 
-# Convert OTEL traces
+# Convert traces (OTEL or Mooncake)
 routesim convert -i otel_traces.json -f otel -o trace.jsonl
+routesim convert -i mooncake.jsonl -f mooncake -o trace.jsonl --block-size 16
 
 # List algorithms
 routesim list-algorithms
@@ -175,10 +191,24 @@ maturin develop --release
 
 ## Related Projects
 
+- [Mooncake](https://github.com/kvcache-ai/Mooncake) — KVCache-centric disaggregated LLM serving (FAST 2025 Best Paper)
 - [vLLM](https://github.com/vllm-project/vllm) — High-throughput LLM serving engine
 - [llm-d](https://github.com/llm-d/llm-d) — Kubernetes-native LLM serving
 - [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo) — GPU-optimized inference framework
 - [SGLang](https://github.com/sgl-project/sglang) — Fast structured generation
+
+## Citation
+
+If you use Mooncake traces in your research, please cite:
+
+```bibtex
+@inproceedings{mooncake2025,
+  title     = {Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving},
+  author    = {Qin, Ruoyu and others},
+  booktitle = {USENIX FAST},
+  year      = {2025}
+}
+```
 
 ## License
 

@@ -46,7 +46,7 @@ pub use kv_cache::KvCacheSimulator;
 pub use metrics::{MetricsCollector, SimulationMetrics};
 pub use request::InferenceRequest;
 pub use topology::{BackendRole, BackendState, DisaggregatedConfig, GpuProfile};
-pub use trace::{load_trace, write_compact_jsonl};
+pub use trace::{load_trace, load_trace_with_block_size, write_compact_jsonl};
 
 /// Run a complete simulation with the given config, trace, and algorithm.
 pub fn run_simulation(

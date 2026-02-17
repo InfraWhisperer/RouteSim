@@ -106,6 +106,12 @@ pub struct DisaggregatedConfig {
     pub kv_transfer_latency_us: u64,
     /// KV transfer bandwidth in GB/s.
     pub kv_transfer_bandwidth_gb_s: f64,
+    /// Number of transformer layers in the model.
+    pub num_layers: u32,
+    /// Hidden dimension per attention head.
+    pub head_dim: u32,
+    /// Number of KV attention heads (for GQA models, this is the number of KV heads, not query heads).
+    pub num_kv_heads: u32,
 }
 
 impl Default for DisaggregatedConfig {
@@ -116,6 +122,9 @@ impl Default for DisaggregatedConfig {
             decode_backends: 0,
             kv_transfer_latency_us: 500,
             kv_transfer_bandwidth_gb_s: 50.0,
+            num_layers: 80,
+            head_dim: 128,
+            num_kv_heads: 8,
         }
     }
 }
@@ -123,12 +132,13 @@ impl Default for DisaggregatedConfig {
 impl DisaggregatedConfig {
     /// Estimate KV transfer time in microseconds for a given number of tokens.
     ///
-    /// Assumes ~2 bytes per element, 2 KV heads, and a model dimension of 128 per head.
-    /// Total bytes = num_tokens * 2 * 2 * 128 * num_layers (default 80 for large models).
-    pub fn estimate_transfer_time_us(&self, num_tokens: u32, num_layers: u32) -> u64 {
-        let bytes_per_token = 2u64 * 2 * 128 * num_layers as u64; // KV for all layers
+    /// Assumes ~2 bytes per element (fp16), 2 for K and V tensors.
+    /// Total bytes = num_tokens * 2 * 2 * num_kv_heads * head_dim * num_layers.
+    pub fn estimate_transfer_time_us(&self, num_tokens: u32) -> u64 {
+        let bytes_per_token =
+            2u64 * 2 * self.num_kv_heads as u64 * self.head_dim as u64 * self.num_layers as u64;
         let total_bytes = num_tokens as u64 * bytes_per_token;
-        let bandwidth_bytes_per_us = (self.kv_transfer_bandwidth_gb_s * 1e3) / 1e6; // GB/s -> bytes/us
+        let bandwidth_bytes_per_us = self.kv_transfer_bandwidth_gb_s * 1e3; // GB/s -> bytes/us (1 GB/s = 1e9 B/s = 1e3 B/us)
         let transfer_us = (total_bytes as f64 / bandwidth_bytes_per_us) as u64;
         self.kv_transfer_latency_us + transfer_us
     }
@@ -157,10 +167,47 @@ mod tests {
             decode_backends: 6,
             kv_transfer_latency_us: 500,
             kv_transfer_bandwidth_gb_s: 50.0,
+            num_layers: 80,
+            head_dim: 128,
+            num_kv_heads: 8,
         };
-        let time = config.estimate_transfer_time_us(1024, 80);
-        // Should be latency + transfer time
-        assert!(time > 500);
+        let time = config.estimate_transfer_time_us(1024);
+        // bytes_per_token = 2 * 2 * 8 * 128 * 80 = 327,680
+        // total_bytes = 1024 * 327,680 = 335,544,320
+        // bandwidth = 50 GB/s = 50,000 bytes/us
+        // transfer_us = 335,544,320 / 50,000 = 6710
+        // total = 500 + 6710 = 7210
+        assert!(time > 500, "Transfer should exceed base latency");
+        assert!(
+            time < 15000,
+            "Transfer of 1024 tokens with 8 KV heads over 50 GB/s should be ~7.2ms, got {}us",
+            time
+        );
+    }
+
+    #[test]
+    fn test_transfer_time_with_many_kv_heads() {
+        let config = DisaggregatedConfig {
+            enabled: true,
+            prefill_backends: 2,
+            decode_backends: 6,
+            kv_transfer_latency_us: 500,
+            kv_transfer_bandwidth_gb_s: 50.0,
+            num_layers: 80,
+            head_dim: 128,
+            num_kv_heads: 64, // Full MHA (not GQA)
+        };
+        let time = config.estimate_transfer_time_us(1024);
+        // bytes_per_token = 2 * 2 * 64 * 128 * 80 = 2,621,440
+        // total_bytes = 1024 * 2,621,440 = 2,684,354,560
+        // bandwidth = 50,000 bytes/us
+        // transfer_us = 2,684,354,560 / 50,000 = 53,687
+        // total = 500 + 53,687 = 54,187
+        assert!(
+            (time as i64 - 54187).abs() < 100,
+            "Transfer time should be ~54187us for 64 KV heads, got {}",
+            time,
+        );
     }
 
     #[test]

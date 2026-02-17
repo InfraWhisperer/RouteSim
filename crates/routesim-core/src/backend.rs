@@ -221,7 +221,12 @@ impl SimulatedBackend {
     /// Estimated time to first token for a new request, in milliseconds.
     pub fn estimated_ttft_ms(&self) -> f64 {
         let queue_wait = self.estimated_queue_wait_ms();
-        let avg_prompt = 512.0; // reasonable default
+        let avg_prompt = if self.queue.is_empty() {
+            512.0
+        } else {
+            let total: u32 = self.queue.iter().map(|q| q.request.prompt_tokens).sum();
+            total as f64 / self.queue.len() as f64
+        };
         let prefill = self.compute_model.prefill_latency_ms(avg_prompt as u32);
         queue_wait + prefill
     }
@@ -233,8 +238,22 @@ impl SimulatedBackend {
         }
         let batch_size = self.active_batch.size().max(1);
         let tbt = self.compute_model.inter_token_latency_ms(batch_size);
-        // Rough estimate: each queued request adds ~tbt * avg_tokens wait
-        self.queue.len() as f64 * tbt * 50.0 // assume ~50 tokens avg remaining
+        let avg_remaining = if self.active_batch.requests.is_empty() {
+            50.0
+        } else {
+            let total_remaining: u32 = self
+                .active_batch
+                .requests
+                .iter()
+                .map(|r| {
+                    r.request
+                        .actual_gen_tokens
+                        .saturating_sub(r.tokens_generated)
+                })
+                .sum();
+            total_remaining as f64 / self.active_batch.size() as f64
+        };
+        self.queue.len() as f64 * tbt * avg_remaining
     }
 
     /// Current decode tokens/sec for the active batch.
@@ -252,6 +271,7 @@ impl SimulatedBackend {
             active_batch_tokens: self.active_batch.total_tokens,
             kv_cache_utilization: self.kv_cache.utilization(),
             prefix_hashes_cached: self.kv_cache.cached_prefix_hashes(),
+            cached_block_hashes: self.kv_cache.cached_content_block_hashes(),
             estimated_ttft_ms: self.estimated_ttft_ms(),
             tokens_per_sec_current: self.current_tokens_per_sec(),
             role: self.role,
@@ -259,6 +279,7 @@ impl SimulatedBackend {
             lora_adapters_loaded: self.lora_adapters.clone(),
             total_requests_served: self.total_requests_served,
             total_tokens_generated: self.total_tokens_generated,
+            max_queue_depth: self.max_queue_depth,
         }
     }
 }
@@ -278,6 +299,8 @@ pub struct BackendSnapshot {
     pub kv_cache_utilization: f32,
     /// Set of prefix hashes currently cached.
     pub prefix_hashes_cached: HashSet<u64>,
+    /// Set of individual cache block hashes currently held by this backend.
+    pub cached_block_hashes: HashSet<u64>,
     /// Estimated time to first token for a new request (ms).
     pub estimated_ttft_ms: f64,
     /// Current decode throughput (tokens/sec).
@@ -292,6 +315,8 @@ pub struct BackendSnapshot {
     pub total_requests_served: u64,
     /// Total tokens generated.
     pub total_tokens_generated: u64,
+    /// Maximum queue depth.
+    pub max_queue_depth: u32,
 }
 
 #[cfg(test)]
@@ -320,6 +345,7 @@ mod tests {
             actual_gen_tokens: 128,
             prefix_hash: None,
             prefix_token_length: None,
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,

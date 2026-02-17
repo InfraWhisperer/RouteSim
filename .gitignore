@@ -32,3 +32,9 @@ venv/
 
 # Results
 results/
+
+# Downloaded Mooncake traces (large; use scripts/download_mooncake_traces.sh)
+traces/conversation_trace.jsonl
+traces/synthetic_trace.jsonl
+traces/toolagent_trace.jsonl
+traces/mooncake_trace.jsonl

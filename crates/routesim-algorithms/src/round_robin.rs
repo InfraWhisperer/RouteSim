@@ -7,13 +7,19 @@
 use crate::traits::*;
 
 /// Round-robin router.
+///
+/// Tracks the last-used backend by ID rather than positional index, so the
+/// rotation is stable even when backends go offline or start draining.
 pub struct RoundRobin {
-    next_index: usize,
+    /// ID of the last backend we routed to (None on first call).
+    last_backend_id: Option<u32>,
 }
 
 impl RoundRobin {
     pub fn new() -> Self {
-        Self { next_index: 0 }
+        Self {
+            last_backend_id: None,
+        }
     }
 }
 
@@ -35,12 +41,22 @@ impl RoutingAlgorithm for RoundRobin {
             return RoutingDecision::Reject;
         }
 
-        // Wrap around
-        self.next_index %= available.len();
-        let backend = available[self.next_index];
-        self.next_index += 1;
+        // Find the next available backend after the last one we used.
+        // If no prior backend (first call), start from the first available.
+        let chosen = match self.last_backend_id {
+            Some(last_id) => {
+                // Find the first available backend with id > last_id (wrap around)
+                available
+                    .iter()
+                    .find(|b| b.id > last_id)
+                    .or_else(|| available.first())
+                    .unwrap()
+            }
+            None => available.first().unwrap(),
+        };
 
-        RoutingDecision::Route(backend.id)
+        self.last_backend_id = Some(chosen.id);
+        RoutingDecision::Route(chosen.id)
     }
 
     fn name(&self) -> &str {
@@ -68,6 +84,7 @@ mod tests {
             actual_gen_tokens: 50,
             prefix_hash: None,
             prefix_token_length: None,
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,
@@ -98,5 +115,48 @@ mod tests {
             RoutingDecision::Reject => {}
             _ => panic!("Expected Reject"),
         }
+    }
+
+    #[test]
+    fn test_round_robin_stable_with_backend_removal() {
+        // When a backend goes offline, round-robin should not skip or
+        // double-serve other backends. It advances by ID, not position.
+        let mut rr = RoundRobin::new();
+        let clock = FakeClock;
+
+        // Start with 4 backends: [0, 1, 2, 3]
+        let backends = make_backends(4);
+        // Route 2 requests: should go to 0, 1
+        let r1 = match rr.route(&dummy_request(), &backends, &clock) {
+            RoutingDecision::Route(id) => id,
+            _ => panic!("Expected Route"),
+        };
+        assert_eq!(r1, 0);
+        let r2 = match rr.route(&dummy_request(), &backends, &clock) {
+            RoutingDecision::Route(id) => id,
+            _ => panic!("Expected Route"),
+        };
+        assert_eq!(r2, 1);
+
+        // Backend 2 goes offline: available = [0, 1, 3]
+        let mut backends_minus_2 = make_backends(4);
+        backends_minus_2[2].state = BackendState::Offline;
+
+        // Next request should go to backend 3 (next ID after 1), not skip to 0
+        let r3 = match rr.route(&dummy_request(), &backends_minus_2, &clock) {
+            RoutingDecision::Route(id) => id,
+            _ => panic!("Expected Route"),
+        };
+        assert_eq!(
+            r3, 3,
+            "Should advance to backend 3, not skip due to backend 2 going offline"
+        );
+
+        // Next should wrap around to 0
+        let r4 = match rr.route(&dummy_request(), &backends_minus_2, &clock) {
+            RoutingDecision::Route(id) => id,
+            _ => panic!("Expected Route"),
+        };
+        assert_eq!(r4, 0, "Should wrap around to backend 0");
     }
 }

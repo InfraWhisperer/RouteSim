@@ -104,9 +104,9 @@ itl_ms = (batch_size / throughput) * 1000
 
 This is a simplification -- real throughput curves aren't perfectly linear -- but it captures the essential behavior: small batches are inefficient, larger batches amortize overhead, and there's a point of diminishing returns.
 
-### Continuous Batching
+### Dynamic Batching
 
-The simulator models continuous batching (as in vLLM, TGI, etc.). New requests can join the active batch while existing requests are decoding, as long as the total token budget isn't exceeded. This is triggered by `BatchSchedule` events that fire whenever a backend becomes idle or completes a request.
+The simulator models dynamic batching where new requests can join the active batch at scheduling boundaries (when a backend becomes idle, finishes a prefill, or completes a request). A `BatchSchedule` event fires at these points and dequeues waiting requests into the batch up to the token budget. This is simpler than true iteration-level continuous batching (as in vLLM or TGI, where requests can be inserted mid-decode-step), but it captures the key behavior: batches grow and shrink over time as requests arrive and complete.
 
 ## KV Cache Simulation
 
@@ -196,12 +196,13 @@ The core engine and algorithm crate have parallel type hierarchies (`core::Backe
 
 | Algorithm | Strategy | Complexity |
 |-----------|----------|------------|
-| `round_robin` | Cycle through backends | O(1) |
+| `round_robin` | Cycle through backends | O(n) |
 | `least_outstanding` | Pick backend with fewest queued + active requests | O(n) |
 | `least_kv` | Pick backend with lowest KV cache utilization | O(n) |
 | `prefix_aware` | Weighted score: cache hit bonus + load balance penalty | O(n) |
 | `session_affinity` | Sticky sessions per conversation ID | O(1) amortized |
 | `cost_escalation` | Dynamic cost model with exponential decay | O(n) |
+| `prefix_overlap` | Block-level KV cache overlap scoring | O(n*b) |
 
 ### prefix_aware
 
@@ -216,6 +217,20 @@ Where `has_prefix` is 1 if the backend has the request's prefix cached (checked 
 ### cost_escalation
 
 Each backend accumulates a cost when it receives a request. Costs decay exponentially over time. The algorithm always picks the backend with the lowest current cost. This naturally distributes load while being responsive to bursts -- a backend that just received many requests will have high cost and be avoided.
+
+### prefix_overlap
+
+This algorithm exploits block-level KV cache hashes from Mooncake production traces (and any system that uses content-addressed block caching, like SGLang's RadixAttention). Instead of checking a single prefix hash, it computes the overlap between the request's `cache_block_hashes` and each backend's `cached_block_hashes`:
+
+```
+cache_score = |request.blocks ∩ backend.cached_blocks| / |request.blocks|
+load_score  = 1 - (queue_depth + active_batch) / max_queue_depth
+score       = cache_weight * cache_score + (1 - cache_weight) * load_score
+```
+
+The default `cache_weight` is 0.7. A circuit breaker ignores cache affinity when a backend exceeds 90% load, preventing cache-hot backends from becoming overwhelmed. When the request has no block hashes, it falls back to least-outstanding.
+
+The complexity is O(n*b) where n is the number of backends and b is the number of blocks per request, since computing the overlap requires checking each block against the backend's hash set.
 
 ## Metrics
 
@@ -259,7 +274,8 @@ When enabled:
 3. After prefill completes, a `KvTransferStart` event fires
 4. Transfer time is modeled based on KV size and interconnect bandwidth:
    ```
-   bytes = num_tokens * 2 * 2 * 128 * num_layers
+   bytes_per_token = 2 (K+V) * 2 (bytes/fp16) * num_kv_heads * head_dim * num_layers
+   bytes = num_tokens * bytes_per_token
    transfer_us = latency_us + bytes / bandwidth_bytes_per_us
    ```
 5. After transfer, the request enters the decode backend's batch
@@ -317,7 +333,7 @@ Release builds enable LTO and single codegen unit for maximum performance. The s
 
 **What's simplified:**
 - The piecewise-linear throughput model is an approximation. Real GPUs have more complex scaling curves.
-- TBT is modeled as uniform within a request (average inter-token latency repeated). In reality, TBT varies token-to-token.
+- TBT is computed from per-token timestamps, so it reflects real batch-size variation within a request. However, the compute model's throughput curve is a piecewise-linear approximation, so token-to-token latency may differ from real hardware.
 - Network latency between the load balancer and backends is not modeled (assumed negligible for datacenter deployments).
 - Memory fragmentation beyond block-level granularity is not simulated.
 - Model weights, LoRA adapters, and multi-model serving are represented structurally but the compute impact of adapter switching isn't modeled in detail.

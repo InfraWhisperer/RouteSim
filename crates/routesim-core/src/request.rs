@@ -24,6 +24,12 @@ pub struct InferenceRequest {
     pub prefix_hash: Option<u64>,
     /// Length of the shared prefix in tokens.
     pub prefix_token_length: Option<u32>,
+    /// Sequence of KV cache block hashes for block-level prefix overlap routing.
+    /// Each element represents a fixed-size block of tokens. Requests sharing a
+    /// common prefix will have identical leading entries. Used by the
+    /// `prefix_overlap` algorithm and populated from Mooncake traces.
+    #[serde(default)]
+    pub cache_block_hashes: Vec<u64>,
     /// Conversation identifier for session affinity.
     pub conversation_id: Option<String>,
     /// LoRA adapter name for multi-model routing.
@@ -67,6 +73,10 @@ pub struct ActiveRequest {
     pub tokens_generated: u32,
     pub last_token_ms: Option<u64>,
     pub prefix_cache_hit: bool,
+    /// Per-token generation timestamps for real TBT samples.
+    pub token_timestamps_ms: Vec<u64>,
+    /// When decode phase started (set on decode backend in disaggregated mode).
+    pub decode_start_ms: Option<u64>,
 }
 
 impl ActiveRequest {
@@ -79,6 +89,8 @@ impl ActiveRequest {
             tokens_generated: 0,
             last_token_ms: None,
             prefix_cache_hit: false,
+            token_timestamps_ms: Vec::new(),
+            decode_start_ms: None,
         }
     }
 
@@ -93,6 +105,17 @@ impl ActiveRequest {
     /// Whether generation is complete.
     pub fn is_complete(&self) -> bool {
         self.tokens_generated >= self.request.actual_gen_tokens
+    }
+
+    /// Compute actual time-between-token samples from recorded timestamps.
+    pub fn tbt_samples(&self) -> Vec<f64> {
+        if self.token_timestamps_ms.len() < 2 {
+            return vec![];
+        }
+        self.token_timestamps_ms
+            .windows(2)
+            .map(|w| (w[1] - w[0]) as f64)
+            .collect()
     }
 }
 
@@ -109,6 +132,7 @@ mod tests {
             actual_gen_tokens: 128,
             prefix_hash: Some(0xABCD),
             prefix_token_length: Some(256),
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,

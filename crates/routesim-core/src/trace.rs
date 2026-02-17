@@ -1,7 +1,9 @@
 //! Trace ingestion for RouteSim.
 //!
-//! Supports two input formats:
+//! Supports three input formats:
 //! - **Compact JSONL**: One JSON object per line with minimal fields.
+//! - **Mooncake JSONL**: Production traces from Moonshot AI's Kimi chatbot
+//!   (FAST 2025 Best Paper) with block-level KV cache hashes.
 //! - **OpenTelemetry JSON**: Parsed from OTEL trace exports, extracting
 //!   LLM inference spans with token counts.
 
@@ -88,12 +90,47 @@ struct OtelTrace {
     resource_spans: Vec<OtelResourceSpans>,
 }
 
+/// A Mooncake JSONL trace record (from Moonshot AI's Kimi chatbot).
+///
+/// Source: <https://github.com/kvcache-ai/Mooncake>
+/// Paper: Qin et al., "Mooncake: Trading More Storage for Less Computation", FAST 2025.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MooncakeTraceRecord {
+    /// Relative arrival time in milliseconds (monotonically increasing from 0).
+    pub timestamp: u64,
+    /// Number of input/prompt tokens.
+    pub input_length: u32,
+    /// Number of output/generated tokens.
+    pub output_length: u32,
+    /// Sequence of remapped KV cache block hashes. Each integer maps to a
+    /// fixed-size block of tokens. Requests sharing a common prefix will have
+    /// identical leading entries. This encodes real prefix sharing patterns.
+    #[serde(default)]
+    pub hash_ids: Vec<u64>,
+}
+
+/// Default Mooncake block size in tokens (matches vLLM default).
+pub const DEFAULT_MOONCAKE_BLOCK_SIZE: u32 = 16;
+
 /// Load a trace from a file, auto-detecting format.
 pub fn load_trace(path: &Path, format: &str) -> Result<Vec<InferenceRequest>, TraceError> {
     match format {
         "compact_jsonl" | "jsonl" => load_compact_jsonl(path),
+        "mooncake" => load_mooncake_jsonl(path, DEFAULT_MOONCAKE_BLOCK_SIZE),
         "otel" | "opentelemetry" => load_otel_json(path),
         other => Err(TraceError::UnsupportedFormat(other.to_string())),
+    }
+}
+
+/// Load a trace with a custom block size (for Mooncake format).
+pub fn load_trace_with_block_size(
+    path: &Path,
+    format: &str,
+    block_size: u32,
+) -> Result<Vec<InferenceRequest>, TraceError> {
+    match format {
+        "mooncake" => load_mooncake_jsonl(path, block_size),
+        _ => load_trace(path, format),
     }
 }
 
@@ -149,6 +186,97 @@ pub fn load_otel_json(path: &Path) -> Result<Vec<InferenceRequest>, TraceError> 
     Ok(requests)
 }
 
+/// Load a Mooncake JSONL trace file.
+///
+/// Each line contains: `{"timestamp": N, "input_length": N, "output_length": N, "hash_ids": [...]}`
+/// The `hash_ids` array encodes KV cache block hashes from production traffic.
+pub fn load_mooncake_jsonl(
+    path: &Path,
+    block_size: u32,
+) -> Result<Vec<InferenceRequest>, TraceError> {
+    let file = std::fs::File::open(path)?;
+    let reader = BufReader::new(file);
+    parse_mooncake_jsonl(reader, block_size)
+}
+
+/// Parse Mooncake JSONL from any reader.
+pub fn parse_mooncake_jsonl<R: Read>(
+    reader: BufReader<R>,
+    block_size: u32,
+) -> Result<Vec<InferenceRequest>, TraceError> {
+    let mut requests = Vec::new();
+    for (line_num, line) in reader.lines().enumerate() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let record: MooncakeTraceRecord =
+            serde_json::from_str(trimmed).map_err(|e| TraceError::JsonParse {
+                line: line_num + 1,
+                source: e,
+            })?;
+        requests.push(mooncake_record_to_request(
+            requests.len() as u64,
+            record,
+            block_size,
+        ));
+    }
+
+    requests.sort_by_key(|r| r.arrival_time_ms);
+    Ok(requests)
+}
+
+/// Convert a Mooncake trace record to an InferenceRequest.
+///
+/// Prefix hash: hash of the entire hash_ids array (exact prefix match).
+/// The raw hash_ids are preserved in `cache_block_hashes` for block-level
+/// overlap computation by the `prefix_overlap` algorithm.
+fn mooncake_record_to_request(
+    id: u64,
+    record: MooncakeTraceRecord,
+    block_size: u32,
+) -> InferenceRequest {
+    let prefix_hash = if record.hash_ids.is_empty() {
+        None
+    } else {
+        Some(hash_u64_slice(&record.hash_ids))
+    };
+
+    let prefix_token_count = record.hash_ids.len() as u32 * block_size;
+
+    InferenceRequest {
+        id,
+        arrival_time_ms: record.timestamp,
+        prompt_tokens: record.input_length,
+        max_gen_tokens: record.output_length,
+        actual_gen_tokens: record.output_length,
+        prefix_hash,
+        prefix_token_length: if prefix_token_count > 0 {
+            Some(prefix_token_count.min(record.input_length))
+        } else {
+            None
+        },
+        cache_block_hashes: record.hash_ids,
+        conversation_id: None,
+        lora_adapter: None,
+        priority: 0,
+        metadata: HashMap::new(),
+    }
+}
+
+/// Hash a slice of u64 values using FNV-1a.
+fn hash_u64_slice(values: &[u64]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &v in values {
+        for byte in v.to_le_bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    hash
+}
+
 /// Convert a compact trace record to an InferenceRequest.
 fn record_to_request(id: u64, record: CompactTraceRecord) -> InferenceRequest {
     let prefix_hash = record.prefix_hash.as_ref().map(|s| hash_string(s));
@@ -161,6 +289,7 @@ fn record_to_request(id: u64, record: CompactTraceRecord) -> InferenceRequest {
         actual_gen_tokens: record.gen_tokens,
         prefix_hash,
         prefix_token_length: record.prefix_len,
+        cache_block_hashes: Vec::new(),
         conversation_id: record.conversation_id,
         lora_adapter: record.lora_adapter,
         priority: record.priority.unwrap_or(0),
@@ -209,6 +338,7 @@ fn otel_span_to_request(id: u64, span: &OtelSpan) -> Option<InferenceRequest> {
         actual_gen_tokens: gen_tokens,
         prefix_hash,
         prefix_token_length: None,
+        cache_block_hashes: Vec::new(),
         conversation_id: attrs
             .get("llm.conversation_id")
             .and_then(|a| a.value.string_value.clone()),
@@ -294,6 +424,55 @@ mod tests {
     fn test_hash_string_deterministic() {
         assert_eq!(hash_string("abc123"), hash_string("abc123"));
         assert_ne!(hash_string("abc123"), hash_string("def456"));
+    }
+
+    #[test]
+    fn test_parse_mooncake_jsonl() {
+        let data = r#"{"timestamp": 0, "input_length": 6955, "output_length": 52, "hash_ids": [46, 47, 48, 49, 50]}
+{"timestamp": 100, "input_length": 1024, "output_length": 32, "hash_ids": [46, 47, 48, 100, 101]}
+{"timestamp": 200, "input_length": 512, "output_length": 16, "hash_ids": [1, 2, 3]}
+"#;
+        let reader = BufReader::new(data.as_bytes());
+        let requests = parse_mooncake_jsonl(reader, 16).unwrap();
+        assert_eq!(requests.len(), 3);
+
+        // First request
+        assert_eq!(requests[0].arrival_time_ms, 0);
+        assert_eq!(requests[0].prompt_tokens, 6955);
+        assert_eq!(requests[0].actual_gen_tokens, 52);
+        assert_eq!(requests[0].cache_block_hashes, vec![46, 47, 48, 49, 50]);
+        assert!(requests[0].prefix_hash.is_some());
+        assert_eq!(requests[0].prefix_token_length, Some(80)); // 5 blocks * 16
+
+        // Requests with shared leading blocks should have different prefix_hash
+        // (since the full hash_ids arrays differ)
+        assert_ne!(requests[0].prefix_hash, requests[1].prefix_hash);
+
+        // Block hashes are preserved
+        assert_eq!(requests[1].cache_block_hashes, vec![46, 47, 48, 100, 101]);
+        assert_eq!(requests[2].cache_block_hashes, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_mooncake_empty_hash_ids() {
+        let data = r#"{"timestamp": 0, "input_length": 100, "output_length": 10}
+"#;
+        let reader = BufReader::new(data.as_bytes());
+        let requests = parse_mooncake_jsonl(reader, 16).unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].prefix_hash.is_none());
+        assert!(requests[0].cache_block_hashes.is_empty());
+    }
+
+    #[test]
+    fn test_mooncake_prefix_token_length_capped() {
+        // prefix_token_count should not exceed input_length
+        let data = r#"{"timestamp": 0, "input_length": 32, "output_length": 10, "hash_ids": [1, 2, 3, 4, 5]}
+"#;
+        let reader = BufReader::new(data.as_bytes());
+        let requests = parse_mooncake_jsonl(reader, 16).unwrap();
+        // 5 blocks * 16 = 80, but input_length is only 32
+        assert_eq!(requests[0].prefix_token_length, Some(32));
     }
 
     #[test]

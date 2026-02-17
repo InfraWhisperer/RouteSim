@@ -80,13 +80,18 @@ impl RoutingAlgorithm for PrefixAware {
 
 impl PrefixAware {
     fn score_backend(&self, backend: &BackendSnapshot, prefix_hash: u64) -> f64 {
-        let has_prefix = backend.prefix_hashes_cached.contains(&prefix_hash);
-        let cache_score = if has_prefix { 1.0 } else { 0.0 };
-
-        // Load score: lower load = higher score
-        let max_load = 256.0; // normalize against max queue depth
+        let max_load = backend.max_queue_depth.max(1) as f64;
         let load = (backend.queue_depth + backend.active_batch_size) as f64;
-        let load_score = 1.0 - (load / max_load).min(1.0);
+        let load_ratio = (load / max_load).min(1.0);
+
+        // Circuit breaker: if load exceeds 90% of capacity, ignore cache affinity
+        let has_prefix = backend.prefix_hashes_cached.contains(&prefix_hash);
+        let cache_score = if has_prefix && load_ratio < 0.9 {
+            1.0
+        } else {
+            0.0
+        };
+        let load_score = 1.0 - load_ratio;
 
         self.cache_weight * cache_score + (1.0 - self.cache_weight) * load_score
     }
@@ -112,6 +117,7 @@ mod tests {
             actual_gen_tokens: 128,
             prefix_hash: Some(hash),
             prefix_token_length: Some(256),
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,
@@ -164,6 +170,7 @@ mod tests {
             actual_gen_tokens: 50,
             prefix_hash: None,
             prefix_token_length: None,
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,
@@ -171,6 +178,58 @@ mod tests {
         let clock = FakeClock;
         match algo.route(&req, &backends, &clock) {
             RoutingDecision::Route(id) => assert_eq!(id, 1),
+            _ => panic!("Expected Route"),
+        }
+    }
+
+    #[test]
+    fn test_prefix_aware_circuit_breaker_at_high_load() {
+        let mut algo = PrefixAware::new();
+        let mut backends = make_backends(3);
+
+        // Backend 0 has the prefix but is at >90% capacity
+        backends[0].prefix_hashes_cached.insert(0xABC);
+        backends[0].queue_depth = 230;
+        backends[0].active_batch_size = 14; // total load = 244/256 = 95.3%
+
+        // Backend 1 is empty
+        backends[1].queue_depth = 0;
+        backends[1].active_batch_size = 0;
+
+        let clock = FakeClock;
+        match algo.route(&request_with_prefix(0xABC), &backends, &clock) {
+            RoutingDecision::Route(id) => {
+                assert_ne!(
+                    id, 0,
+                    "Should NOT route to overloaded backend 0 even though it has the prefix"
+                );
+            }
+            _ => panic!("Expected Route"),
+        }
+    }
+
+    #[test]
+    fn test_prefix_aware_cache_works_below_threshold() {
+        let mut algo = PrefixAware::new();
+        let mut backends = make_backends(3);
+
+        // Backend 0 has the prefix and is at ~80% capacity (below 90% threshold)
+        backends[0].prefix_hashes_cached.insert(0xABC);
+        backends[0].queue_depth = 180;
+        backends[0].active_batch_size = 25; // total = 205/256 ≈ 80%
+
+        // Backend 1 is empty
+        backends[1].queue_depth = 0;
+        backends[1].active_batch_size = 0;
+
+        let clock = FakeClock;
+        match algo.route(&request_with_prefix(0xABC), &backends, &clock) {
+            RoutingDecision::Route(id) => {
+                assert_eq!(
+                    id, 0,
+                    "Should route to cached backend 0 since load is below 90%"
+                );
+            }
             _ => panic!("Expected Route"),
         }
     }

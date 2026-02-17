@@ -81,6 +81,11 @@ impl Results {
     }
 
     #[getter]
+    fn block_cache_reuse_rate(&self) -> f64 {
+        self.inner.block_cache_reuse_rate
+    }
+
+    #[getter]
     fn jains_fairness(&self) -> f64 {
         self.inner.jains_fairness_index
     }
@@ -160,6 +165,8 @@ struct BackendInfo {
     #[pyo3(get)]
     prefix_hashes_cached: HashSet<u64>,
     #[pyo3(get)]
+    cached_block_hashes: HashSet<u64>,
+    #[pyo3(get)]
     estimated_ttft_ms: f64,
     #[pyo3(get)]
     tokens_per_sec_current: f64,
@@ -183,6 +190,8 @@ struct PyRequestInfo {
     prefix_hash: Option<u64>,
     #[pyo3(get)]
     prefix_token_length: Option<u32>,
+    #[pyo3(get)]
+    cache_block_hashes: Vec<u64>,
     #[pyo3(get)]
     conversation_id: Option<String>,
     #[pyo3(get)]

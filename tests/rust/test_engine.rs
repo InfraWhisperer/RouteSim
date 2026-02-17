@@ -43,6 +43,7 @@ fn mixed_workload(n: usize) -> Vec<InferenceRequest> {
             actual_gen_tokens: [32, 64, 128, 256, 512][i % 5],
             prefix_hash: Some((i % 5) as u64),
             prefix_token_length: Some([64, 128, 256, 512, 1024][i % 5]),
+            cache_block_hashes: Vec::new(),
             conversation_id: Some(format!("conv-{}", i % 20)),
             lora_adapter: None,
             priority: 0,
@@ -109,6 +110,7 @@ fn test_prefix_aware_has_cache_hits() {
             actual_gen_tokens: 64,
             prefix_hash: Some(0xDEADBEEF),
             prefix_token_length: Some(256),
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,
@@ -118,8 +120,14 @@ fn test_prefix_aware_has_cache_hits() {
 
     let algo = Box::new(PrefixAware::new());
     let metrics = routesim_core::run_simulation(config, requests, algo);
-    // With prefix-aware routing and same prefix, we should see some cache hits
-    assert!(metrics.completed_requests > 0);
+    assert!(metrics.completed_requests > 0, "No requests completed");
+    // With prefix-aware routing and same prefix on all requests,
+    // we should see a non-trivial cache hit rate.
+    assert!(
+        metrics.global_cache_hit_rate > 0.0,
+        "PrefixAware with identical prefix_hash should produce cache hits, got 0% on {} completed requests",
+        metrics.completed_requests
+    );
 }
 
 #[test]
@@ -161,6 +169,7 @@ format = "compact_jsonl"
             actual_gen_tokens: 256,
             prefix_hash: None,
             prefix_token_length: None,
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,

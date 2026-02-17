@@ -45,6 +45,11 @@ impl CostEscalation {
         kv_pressure_cost: f64,
         decay_per_sec: f64,
     ) -> Self {
+        assert!(
+            decay_per_sec >= 0.0,
+            "decay_per_sec must be >= 0.0, got {}",
+            decay_per_sec
+        );
         Self {
             costs: HashMap::new(),
             base_cost,
@@ -154,6 +159,7 @@ mod tests {
             actual_gen_tokens: 50,
             prefix_hash: None,
             prefix_token_length: None,
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,
@@ -209,5 +215,11 @@ mod tests {
         let metrics = algo.custom_metrics();
         assert!(metrics.contains_key("max_backend_cost"));
         assert!(metrics.contains_key("cost_spread"));
+    }
+
+    #[test]
+    #[should_panic(expected = "decay_per_sec must be >= 0.0")]
+    fn test_negative_decay_panics() {
+        CostEscalation::with_params(1.0, 0.5, 2.0, -0.1);
     }
 }

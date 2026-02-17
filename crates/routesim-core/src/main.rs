@@ -33,9 +33,6 @@ enum Commands {
         /// Output results to JSON file.
         #[arg(short, long)]
         output: Option<PathBuf>,
-        /// Generate HTML report.
-        #[arg(long)]
-        report: Option<PathBuf>,
     },
     /// Compare multiple algorithms on the same trace.
     Compare {
@@ -54,9 +51,6 @@ enum Commands {
     },
     /// Generate a synthetic trace.
     GenTrace {
-        /// Generator type: poisson, bursty, diurnal.
-        #[arg(long, default_value = "poisson")]
-        generator: String,
         /// Request rate (requests/sec).
         #[arg(long, default_value = "100")]
         rate: f64,
@@ -90,12 +84,15 @@ enum Commands {
         /// Input trace file.
         #[arg(short, long)]
         input: PathBuf,
-        /// Input format (otel, compact_jsonl).
+        /// Input format (otel, compact_jsonl, mooncake).
         #[arg(short, long)]
         format: String,
         /// Output file path.
         #[arg(short, long)]
         output: PathBuf,
+        /// Tokens per KV cache block (for Mooncake format).
+        #[arg(long, default_value = "16")]
+        block_size: u32,
     },
     /// Sweep request rates to find saturation point.
     Sweep {
@@ -128,7 +125,6 @@ fn main() {
             trace: trace_path,
             algorithm,
             output,
-            report: _,
         } => {
             let sim_config = SimConfig::from_file(&config).unwrap_or_else(|e| {
                 eprintln!("Error loading config: {}", e);
@@ -192,7 +188,6 @@ fn main() {
             }
         }
         Commands::GenTrace {
-            generator: _,
             rate,
             duration,
             prompt_mean,
@@ -229,6 +224,7 @@ fn main() {
                     actual_gen_tokens: gen_tokens,
                     prefix_hash,
                     prefix_token_length: prefix_len,
+                    cache_block_hashes: Vec::new(),
                     conversation_id: None,
                     lora_adapter: None,
                     priority: 0,
@@ -250,11 +246,13 @@ fn main() {
             input,
             format,
             output,
+            block_size,
         } => {
-            let requests = trace::load_trace(&input, &format).unwrap_or_else(|e| {
-                eprintln!("Error loading trace: {}", e);
-                std::process::exit(1);
-            });
+            let requests = trace::load_trace_with_block_size(&input, &format, block_size)
+                .unwrap_or_else(|e| {
+                    eprintln!("Error loading trace: {}", e);
+                    std::process::exit(1);
+                });
             trace::write_compact_jsonl(&requests, &output).unwrap_or_else(|e| {
                 eprintln!("Error writing trace: {}", e);
                 std::process::exit(1);
@@ -296,6 +294,7 @@ fn main() {
                             actual_gen_tokens: (150.0 + rng.gen::<f64>() * 50.0) as u32,
                             prefix_hash: Some(rng.gen_range(0..10u64)),
                             prefix_token_length: Some(256),
+                            cache_block_hashes: Vec::new(),
                             conversation_id: None,
                             lora_adapter: None,
                             priority: 0,

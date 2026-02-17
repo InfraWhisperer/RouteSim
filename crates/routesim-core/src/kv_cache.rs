@@ -41,6 +41,12 @@ pub struct KvCacheSimulator {
     lru_order: VecDeque<u64>,
     /// Set of free block IDs.
     free_blocks: Vec<u64>,
+    /// Content-addressed block hashes cached on this backend.
+    /// Tracks which Mooncake-style block hashes are present for `prefix_overlap` routing.
+    /// Bounded by `total_blocks` capacity; evicts in FIFO order (oldest first).
+    content_block_set: HashSet<u64>,
+    /// Insertion order for FIFO eviction of content block hashes.
+    content_block_order: VecDeque<u64>,
     /// Cache hit counter.
     pub hits: u64,
     /// Cache miss counter.
@@ -90,6 +96,8 @@ impl KvCacheSimulator {
             request_blocks: HashMap::new(),
             lru_order: VecDeque::new(),
             free_blocks,
+            content_block_set: HashSet::new(),
+            content_block_order: VecDeque::new(),
             hits: 0,
             misses: 0,
             evictions: 0,
@@ -132,6 +140,33 @@ impl KvCacheSimulator {
             .filter(|(_, blocks)| !blocks.is_empty())
             .map(|(hash, _)| *hash)
             .collect()
+    }
+
+    /// Get the set of all content-addressed block hashes currently cached.
+    /// These are the original hash_ids (e.g., from Mooncake traces), not
+    /// internal block allocation identifiers.
+    pub fn cached_content_block_hashes(&self) -> HashSet<u64> {
+        self.content_block_set.clone()
+    }
+
+    /// Record that a set of content block hashes are cached on this backend.
+    /// New hashes are appended; when the set exceeds `total_blocks` capacity,
+    /// the oldest entries are evicted in FIFO order.
+    pub fn add_content_blocks(&mut self, hashes: &[u64]) {
+        for &hash in hashes {
+            if self.content_block_set.insert(hash) {
+                self.content_block_order.push_back(hash);
+            }
+        }
+        // Evict oldest entries if over capacity
+        let capacity = self.total_blocks as usize;
+        while self.content_block_set.len() > capacity {
+            if let Some(old) = self.content_block_order.pop_front() {
+                self.content_block_set.remove(&old);
+            } else {
+                break;
+            }
+        }
     }
 
     /// Allocate blocks for a request, including prefix block reuse.
@@ -455,5 +490,86 @@ mod tests {
         assert_eq!(cache.hits, 1);
         assert_eq!(cache.misses, 2); // first request + DEF miss
         assert!(cache.hit_rate() > 0.0);
+    }
+
+    #[test]
+    fn test_prefix_refcount_no_double_decrement() {
+        // Regression test: verify that on a prefix cache hit, the prefix block
+        // ref_count is incremented once (in the hit path) and decremented once
+        // (in release_request). No double-decrement or premature eviction.
+        let mut cache = KvCacheSimulator::new(100, 16);
+
+        // Request A: creates prefix blocks (cache miss)
+        let r1 = cache.allocate_for_request(1, 128, Some(0xABC), Some(64));
+        assert!(r1.success);
+        assert!(!r1.prefix_cache_hit);
+        let _total_blocks = r1.blocks_allocated;
+
+        // Release A — prefix blocks stay (ref_count=0, kept for reuse)
+        cache.release_request(1);
+        assert!(
+            cache.has_prefix(0xABC),
+            "Prefix should survive after release"
+        );
+
+        // Request B: same prefix → cache hit
+        let r2 = cache.allocate_for_request(2, 128, Some(0xABC), Some(64));
+        assert!(r2.success);
+        assert!(r2.prefix_cache_hit);
+        assert!(r2.prefix_blocks_reused > 0);
+
+        // Request C: same prefix, concurrent with B → cache hit
+        let r3 = cache.allocate_for_request(3, 128, Some(0xABC), Some(64));
+        assert!(r3.success);
+        assert!(r3.prefix_cache_hit);
+
+        // Verify prefix block ref_counts: should be 2 (B + C)
+        let prefix_block_ids: Vec<u64> = cache.prefix_index.get(&0xABC).unwrap().clone();
+        for &bid in &prefix_block_ids {
+            let block = cache.allocated_blocks.get(&bid).unwrap();
+            assert_eq!(
+                block.ref_count, 2,
+                "Prefix block {} should have ref_count=2 (B+C), got {}",
+                bid, block.ref_count
+            );
+        }
+
+        // Release B — prefix ref_count should go 2→1
+        cache.release_request(2);
+        for &bid in &prefix_block_ids {
+            let block = cache.allocated_blocks.get(&bid).unwrap();
+            assert_eq!(
+                block.ref_count, 1,
+                "After releasing B, prefix block {} should have ref_count=1, got {}",
+                bid, block.ref_count
+            );
+        }
+        assert!(
+            cache.has_prefix(0xABC),
+            "Prefix should survive after B released"
+        );
+
+        // Release C — prefix ref_count should go 1→0, blocks kept for reuse
+        cache.release_request(3);
+        for &bid in &prefix_block_ids {
+            let block = cache.allocated_blocks.get(&bid).unwrap();
+            assert_eq!(
+                block.ref_count, 0,
+                "After releasing C, prefix block {} should have ref_count=0, got {}",
+                bid, block.ref_count
+            );
+        }
+        assert!(
+            cache.has_prefix(0xABC),
+            "Prefix should survive with ref_count=0 (kept for reuse)"
+        );
+
+        // Request D: should still get a cache hit on the surviving prefix
+        let r4 = cache.allocate_for_request(4, 128, Some(0xABC), Some(64));
+        assert!(r4.success);
+        assert!(
+            r4.prefix_cache_hit,
+            "Prefix should still be available for cache hit after all prior requests released"
+        );
     }
 }

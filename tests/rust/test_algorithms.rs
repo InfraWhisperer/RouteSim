@@ -35,6 +35,7 @@ fn uniform_requests(n: usize) -> Vec<InferenceRequest> {
             actual_gen_tokens: 64,
             prefix_hash: None,
             prefix_token_length: None,
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,
@@ -70,6 +71,7 @@ fn test_session_affinity_stickiness() {
             actual_gen_tokens: 32,
             prefix_hash: None,
             prefix_token_length: None,
+            cache_block_hashes: Vec::new(),
             conversation_id: Some(format!("conv-{}", i % 5)), // 5 conversations
             lora_adapter: None,
             priority: 0,

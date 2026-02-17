@@ -154,6 +154,12 @@ pub struct DisaggregatedSection {
     pub kv_transfer_latency_us: u64,
     #[serde(default = "default_kv_transfer_bw")]
     pub kv_transfer_bandwidth_gb_s: f64,
+    #[serde(default = "default_num_layers")]
+    pub num_layers: u32,
+    #[serde(default = "default_head_dim")]
+    pub head_dim: u32,
+    #[serde(default = "default_num_kv_heads")]
+    pub num_kv_heads: u32,
 }
 
 fn default_kv_transfer_latency() -> u64 {
@@ -161,6 +167,15 @@ fn default_kv_transfer_latency() -> u64 {
 }
 fn default_kv_transfer_bw() -> f64 {
     50.0
+}
+fn default_num_layers() -> u32 {
+    80
+}
+fn default_head_dim() -> u32 {
+    128
+}
+fn default_num_kv_heads() -> u32 {
+    8
 }
 
 impl Default for DisaggregatedSection {
@@ -171,6 +186,9 @@ impl Default for DisaggregatedSection {
             decode_backends: 0,
             kv_transfer_latency_us: default_kv_transfer_latency(),
             kv_transfer_bandwidth_gb_s: default_kv_transfer_bw(),
+            num_layers: default_num_layers(),
+            head_dim: default_head_dim(),
+            num_kv_heads: default_num_kv_heads(),
         }
     }
 }
@@ -183,6 +201,9 @@ impl From<DisaggregatedSection> for DisaggregatedConfig {
             decode_backends: s.decode_backends,
             kv_transfer_latency_us: s.kv_transfer_latency_us,
             kv_transfer_bandwidth_gb_s: s.kv_transfer_bandwidth_gb_s,
+            num_layers: s.num_layers,
+            head_dim: s.head_dim,
+            num_kv_heads: s.num_kv_heads,
         }
     }
 }
@@ -252,6 +273,37 @@ impl SimConfig {
                     self.cluster.num_backends,
                 )));
             }
+            if self.cluster.disaggregated.kv_transfer_bandwidth_gb_s <= 0.0 {
+                return Err(ConfigError::Validation(
+                    "kv_transfer_bandwidth_gb_s must be > 0 when disaggregated is enabled"
+                        .to_string(),
+                ));
+            }
+        }
+        if self.cluster.compute_model.prefill_tokens_per_sec <= 0.0 {
+            return Err(ConfigError::Validation(
+                "prefill_tokens_per_sec must be > 0".to_string(),
+            ));
+        }
+        if self.cluster.compute_model.decode_tokens_per_sec_batch1 <= 0.0 {
+            return Err(ConfigError::Validation(
+                "decode_tokens_per_sec_batch1 must be > 0".to_string(),
+            ));
+        }
+        if self.cluster.compute_model.decode_tokens_per_sec_saturated <= 0.0 {
+            return Err(ConfigError::Validation(
+                "decode_tokens_per_sec_saturated must be > 0".to_string(),
+            ));
+        }
+        if self.cluster.max_batch_tokens == 0 {
+            return Err(ConfigError::Validation(
+                "max_batch_tokens must be > 0".to_string(),
+            ));
+        }
+        if self.cluster.kv_cache_blocks == 0 {
+            return Err(ConfigError::Validation(
+                "kv_cache_blocks must be > 0".to_string(),
+            ));
         }
         Ok(())
     }
@@ -367,5 +419,105 @@ format = "compact_jsonl"
         let config = SimConfig::from_str(toml).unwrap();
         assert_eq!(config.simulation.seed, 42);
         assert_eq!(config.cluster.max_batch_tokens, 16384);
+    }
+
+    #[test]
+    fn test_validation_zero_prefill_tps() {
+        let toml = r#"
+[simulation]
+[cluster]
+num_backends = 4
+[cluster.compute_model]
+prefill_tokens_per_sec = 0
+[trace]
+format = "compact_jsonl"
+"#;
+        assert!(SimConfig::from_str(toml).is_err());
+    }
+
+    #[test]
+    fn test_validation_zero_decode_batch1() {
+        let toml = r#"
+[simulation]
+[cluster]
+num_backends = 4
+[cluster.compute_model]
+decode_tokens_per_sec_batch1 = 0
+[trace]
+format = "compact_jsonl"
+"#;
+        assert!(SimConfig::from_str(toml).is_err());
+    }
+
+    #[test]
+    fn test_validation_zero_decode_saturated() {
+        let toml = r#"
+[simulation]
+[cluster]
+num_backends = 4
+[cluster.compute_model]
+decode_tokens_per_sec_saturated = 0
+[trace]
+format = "compact_jsonl"
+"#;
+        assert!(SimConfig::from_str(toml).is_err());
+    }
+
+    #[test]
+    fn test_validation_zero_max_batch_tokens() {
+        let toml = r#"
+[simulation]
+[cluster]
+num_backends = 4
+max_batch_tokens = 0
+[trace]
+format = "compact_jsonl"
+"#;
+        assert!(SimConfig::from_str(toml).is_err());
+    }
+
+    #[test]
+    fn test_validation_zero_kv_cache_blocks() {
+        let toml = r#"
+[simulation]
+[cluster]
+num_backends = 4
+kv_cache_blocks = 0
+[trace]
+format = "compact_jsonl"
+"#;
+        assert!(SimConfig::from_str(toml).is_err());
+    }
+
+    #[test]
+    fn test_validation_zero_bandwidth_disaggregated() {
+        let toml = r#"
+[simulation]
+[cluster]
+num_backends = 4
+[cluster.disaggregated]
+enabled = true
+prefill_backends = 2
+decode_backends = 2
+kv_transfer_bandwidth_gb_s = 0
+[trace]
+format = "compact_jsonl"
+"#;
+        assert!(SimConfig::from_str(toml).is_err());
+    }
+
+    #[test]
+    fn test_validation_zero_bandwidth_non_disaggregated_ok() {
+        let toml = r#"
+[simulation]
+[cluster]
+num_backends = 4
+[cluster.disaggregated]
+enabled = false
+kv_transfer_bandwidth_gb_s = 0
+[trace]
+format = "compact_jsonl"
+"#;
+        assert!(SimConfig::from_str(toml).is_ok());
     }
 }

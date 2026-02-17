@@ -18,6 +18,9 @@ pub struct BackendSnapshot {
     pub active_batch_tokens: u32,
     pub kv_cache_utilization: f32,
     pub prefix_hashes_cached: std::collections::HashSet<u64>,
+    /// Set of individual cache block hashes currently held by this backend.
+    /// Used by `prefix_overlap` algorithm to compute block-level overlap.
+    pub cached_block_hashes: std::collections::HashSet<u64>,
     pub estimated_ttft_ms: f64,
     pub tokens_per_sec_current: f64,
     pub role: BackendRole,
@@ -25,6 +28,7 @@ pub struct BackendSnapshot {
     pub lora_adapters_loaded: Vec<String>,
     pub total_requests_served: u64,
     pub total_tokens_generated: u64,
+    pub max_queue_depth: u32,
 }
 
 /// Role a backend plays in the cluster.
@@ -71,6 +75,9 @@ pub struct RequestInfo {
     pub actual_gen_tokens: u32,
     pub prefix_hash: Option<u64>,
     pub prefix_token_length: Option<u32>,
+    /// Sequence of KV cache block hashes for block-level prefix overlap routing.
+    /// Populated from Mooncake traces; empty for other trace formats.
+    pub cache_block_hashes: Vec<u64>,
     pub conversation_id: Option<String>,
     pub lora_adapter: Option<String>,
     pub priority: u8,
@@ -124,10 +131,18 @@ pub trait RoutingAlgorithm: Send + Sync {
 }
 
 /// Filter backends to only those that are available for routing.
+///
+/// Excludes backends that are draining, offline, or have a full queue
+/// (queue_depth >= max_queue_depth). Routing to a full-queue backend would
+/// result in the engine rejecting the request at enqueue time.
 pub fn available_backends(backends: &[BackendSnapshot]) -> Vec<&BackendSnapshot> {
     backends
         .iter()
-        .filter(|b| b.state != BackendState::Draining && b.state != BackendState::Offline)
+        .filter(|b| {
+            b.state != BackendState::Draining
+                && b.state != BackendState::Offline
+                && b.queue_depth < b.max_queue_depth
+        })
         .collect()
 }
 
@@ -139,7 +154,10 @@ pub fn backends_with_role(
     backends
         .iter()
         .filter(|b| {
-            b.role == role && b.state != BackendState::Draining && b.state != BackendState::Offline
+            b.role == role
+                && b.state != BackendState::Draining
+                && b.state != BackendState::Offline
+                && b.queue_depth < b.max_queue_depth
         })
         .collect()
 }

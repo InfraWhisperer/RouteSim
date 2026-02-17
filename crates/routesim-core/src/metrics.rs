@@ -20,6 +20,10 @@ pub struct RequestMetric {
     pub prompt_tokens: u32,
     pub gen_tokens: u32,
     pub prefix_cache_hit: bool,
+    /// Fraction of the request's cache_block_hashes that were already cached
+    /// on the routed backend (0.0 if no block hashes). Measures block-level
+    /// cache affinity for prefix_overlap routing.
+    pub block_cache_overlap: f64,
     pub tbt_samples_ms: Vec<f64>,
 }
 
@@ -115,6 +119,10 @@ pub struct SimulationMetrics {
 
     // Cache
     pub global_cache_hit_rate: f64,
+    /// Average block-level cache overlap at routing time (0.0–1.0).
+    /// Measures how well the routing algorithm exploits content-addressed
+    /// block caching (relevant for `prefix_overlap` and Mooncake traces).
+    pub block_cache_reuse_rate: f64,
     pub per_backend_cache_stats: Vec<KvCacheStats>,
 
     // Fairness
@@ -188,6 +196,10 @@ impl MetricsCollector {
     }
 
     /// Aggregate all metrics into a summary.
+    ///
+    /// If `warmup_requests` exceeds the number of completed requests, all
+    /// post-warmup records are empty and metrics will be zero. A warning is
+    /// printed to stderr in this case.
     pub fn aggregate(
         &self,
         algorithm: &str,
@@ -195,6 +207,16 @@ impl MetricsCollector {
         custom_metrics: HashMap<String, f64>,
     ) -> SimulationMetrics {
         let records = self.records();
+
+        if records.is_empty() && !self.records.is_empty() {
+            eprintln!(
+                "WARNING: warmup_requests ({}) >= completed requests ({}). \
+                 All latency/throughput metrics will be zero. \
+                 Reduce warmup_requests or increase the number of requests.",
+                self.warmup_count,
+                self.records.len(),
+            );
+        }
 
         // Latency distributions
         let ttft_values: Vec<f64> = records.iter().map(|r| r.ttft_ms as f64).collect();
@@ -232,6 +254,20 @@ impl MetricsCollector {
             cache_hits / cache_lookups
         } else {
             0.0
+        };
+
+        // Block-level cache reuse (for prefix_overlap / Mooncake traces).
+        // block_cache_overlap is -1.0 for requests without block hashes;
+        // only average over requests that actually had block hashes.
+        let block_overlaps: Vec<f64> = records
+            .iter()
+            .map(|r| r.block_cache_overlap)
+            .filter(|&v| v >= 0.0)
+            .collect();
+        let block_cache_reuse_rate = if block_overlaps.is_empty() {
+            0.0
+        } else {
+            block_overlaps.iter().sum::<f64>() / block_overlaps.len() as f64
         };
 
         let per_backend_cache_stats: Vec<KvCacheStats> =
@@ -304,10 +340,15 @@ impl MetricsCollector {
                 0.0
             },
             global_cache_hit_rate,
+            block_cache_reuse_rate,
             per_backend_cache_stats,
             load_cv,
             jains_fairness_index: jains,
-            max_min_queue_ratio: max_queue / min_queue,
+            max_min_queue_ratio: if max_queue == 0.0 {
+                1.0 // All queues empty means perfectly balanced
+            } else {
+                max_queue / min_queue
+            },
             gpu_seconds_per_request,
             estimated_cost_per_1k_tokens,
             per_backend_requests,
@@ -393,6 +434,12 @@ pub fn format_table(metrics: &SimulationMetrics) -> String {
         "  Global cache hit rate: {:.1}%\n",
         metrics.global_cache_hit_rate * 100.0
     ));
+    if metrics.block_cache_reuse_rate > 0.0 {
+        out.push_str(&format!(
+            "  Block cache reuse:     {:.1}%\n",
+            metrics.block_cache_reuse_rate * 100.0
+        ));
+    }
     out.push_str(&format!("{:-<70}\n", "  Fairness  "));
     out.push_str(&format!(
         "  Load CV: {:.3}  Jain's index: {:.4}  Max/min queue: {:.1}\n",
@@ -499,9 +546,42 @@ mod tests {
             prompt_tokens: 512,
             gen_tokens: 128,
             prefix_cache_hit: false,
+            block_cache_overlap: -1.0,
             tbt_samples_ms: vec![10.0, 12.0, 11.0, 13.0],
         };
         assert!((m.avg_tbt_ms() - 11.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_max_min_queue_ratio_all_empty() {
+        use crate::backend::SimulatedBackend;
+        use crate::topology::{BackendRole, GpuProfile};
+
+        let backends: Vec<SimulatedBackend> = (0..4)
+            .map(|id| {
+                SimulatedBackend::new(
+                    id,
+                    GpuProfile::H100Sxm,
+                    Default::default(),
+                    1024,
+                    16,
+                    16384,
+                    256,
+                    BackendRole::Both,
+                )
+            })
+            .collect();
+
+        // All queues are empty
+        assert!(backends.iter().all(|b| b.queue_depth() == 0));
+
+        let collector = MetricsCollector::new(0);
+        let metrics = collector.aggregate("test", &backends, HashMap::new());
+        assert_eq!(
+            metrics.max_min_queue_ratio, 1.0,
+            "All-empty queues should give ratio 1.0 (perfectly balanced), got {}",
+            metrics.max_min_queue_ratio,
+        );
     }
 
     #[test]
@@ -521,6 +601,7 @@ mod tests {
             gen_tokens_per_sec: 1500.0,
             total_tokens_per_sec: 6500.0,
             global_cache_hit_rate: 0.45,
+            block_cache_reuse_rate: 0.0,
             per_backend_cache_stats: vec![],
             load_cv: 0.1,
             jains_fairness_index: 0.98,

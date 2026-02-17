@@ -69,6 +69,7 @@ mod tests {
             actual_gen_tokens: 50,
             prefix_hash: None,
             prefix_token_length: None,
+            cache_block_hashes: Vec::new(),
             conversation_id: None,
             lora_adapter: None,
             priority: 0,

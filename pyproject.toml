@@ -34,6 +34,7 @@ dev = ["pytest>=7.0", "click>=8.0", "ruff", "black"]
 routesim-py = "routesim.cli:main"
 
 [tool.maturin]
+manifest-path = "crates/routesim-python/Cargo.toml"
 features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "routesim.routesim"

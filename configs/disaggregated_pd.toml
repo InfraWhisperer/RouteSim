@@ -26,6 +26,7 @@ prefill_backends = 2
 decode_backends = 6
 kv_transfer_latency_us = 500
 kv_transfer_bandwidth_gb_s = 50.0
+num_kv_heads = 8
 
 [trace]
 format = "compact_jsonl"
