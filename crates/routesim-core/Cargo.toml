@@ -20,6 +20,7 @@ csv = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 routesim-algorithms = { workspace = true }
+rayon = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

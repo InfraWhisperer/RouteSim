@@ -60,18 +60,32 @@ pub fn run_simulation(
 }
 
 /// Run a comparison of multiple algorithms on the same trace and config.
+///
+/// Algorithms run in parallel using rayon, so wall-clock time is roughly
+/// equal to the slowest single algorithm rather than the sum of all.
 pub fn compare_algorithms(
     config: &SimConfig,
     requests: &[InferenceRequest],
     algorithm_names: &[&str],
 ) -> Vec<SimulationMetrics> {
-    algorithm_names
+    use rayon::prelude::*;
+
+    // Pre-build (name, algorithm) pairs so we can filter invalid names before
+    // entering the parallel section.
+    let tasks: Vec<_> = algorithm_names
         .iter()
         .filter_map(|name| {
             let algo = routesim_algorithms::algorithm_by_name(name)?;
+            Some((*name, algo))
+        })
+        .collect();
+
+    tasks
+        .into_par_iter()
+        .map(|(_name, algo)| {
             let cfg = config.clone();
             let reqs = requests.to_vec();
-            Some(run_simulation(cfg, reqs, algo))
+            run_simulation(cfg, reqs, algo)
         })
         .collect()
 }

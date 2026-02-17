@@ -121,6 +121,15 @@ pub trait RoutingAlgorithm: Send + Sync {
     /// Called after each event so the algorithm can update internal state.
     fn on_event(&mut self, _event: &SimEventInfo, _backends: &[BackendSnapshot]) {}
 
+    /// Whether this algorithm uses [`on_event`] to observe simulation events.
+    ///
+    /// Return `true` if your algorithm overrides `on_event`. When `false`
+    /// (the default), the engine skips building backend snapshots for every
+    /// event, which avoids millions of `HashSet` clones per simulation.
+    fn observes_events(&self) -> bool {
+        false
+    }
+
     /// Human-readable name for reports.
     fn name(&self) -> &str;
 

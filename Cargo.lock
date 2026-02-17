@@ -641,6 +641,7 @@ dependencies = [
  "csv",
  "rand",
  "rand_chacha",
+ "rayon",
  "routesim-algorithms",
  "serde",
  "serde_json",

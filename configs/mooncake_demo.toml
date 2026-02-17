@@ -15,7 +15,7 @@ warmup_requests = 50
 [cluster]
 gpu_type = "H100Sxm"
 num_backends = 8
-max_batch_tokens = 16384
+max_batch_tokens = 65536
 max_queue_depth = 256
 kv_cache_blocks = 32768
 kv_block_size = 16

@@ -275,14 +275,19 @@ impl SimulationEngine {
 
     /// Process a single event.
     fn process_event(&mut self, event: SimEvent) {
-        // Let the algorithm observe the event (only for algorithm-facing events)
-        if let Some(algo_event) = to_algo_event(&event) {
-            let algo_snapshots: Vec<_> = self
-                .backends
-                .iter()
-                .map(|b| to_algo_snapshot(&b.snapshot()))
-                .collect();
-            self.algorithm.on_event(&algo_event, &algo_snapshots);
+        // Let the algorithm observe the event (only for algorithm-facing events).
+        // Skip the expensive backend snapshot creation when the algorithm doesn't
+        // override on_event (the common case). This avoids ~19M HashSet clones per
+        // simulation on large traces.
+        if self.algorithm.observes_events() {
+            if let Some(algo_event) = to_algo_event(&event) {
+                let algo_snapshots: Vec<_> = self
+                    .backends
+                    .iter()
+                    .map(|b| to_algo_snapshot(&b.snapshot()))
+                    .collect();
+                self.algorithm.on_event(&algo_event, &algo_snapshots);
+            }
         }
 
         match event {
