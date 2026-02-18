@@ -51,6 +51,15 @@ class Algorithm(ABC):
         """
         pass
 
+    def observes_events(self) -> bool:
+        """Whether this algorithm uses on_event() to observe simulation events.
+
+        Return True if your algorithm overrides on_event(). When False
+        (the default), the engine skips building backend snapshots for
+        every event, which significantly improves performance.
+        """
+        return False
+
     def name(self) -> str:
         """Human-readable algorithm name for reports."""
         return self.__class__.__name__

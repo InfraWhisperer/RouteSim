@@ -24,3 +24,9 @@ def test_algorithm_on_event_default():
     """Test default on_event is a no-op."""
     algo = DummyRouter()
     algo.on_event(None, [])  # Should not raise
+
+
+def test_algorithm_observes_events_default():
+    """Test default observes_events returns False."""
+    algo = DummyRouter()
+    assert algo.observes_events() is False
