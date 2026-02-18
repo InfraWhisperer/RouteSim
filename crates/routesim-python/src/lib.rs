@@ -114,89 +114,159 @@ impl Results {
 
     // --- TTFT additional percentiles ---
     #[getter]
-    fn ttft_p75(&self) -> f64 { self.inner.ttft.p75 }
+    fn ttft_p75(&self) -> f64 {
+        self.inner.ttft.p75
+    }
     #[getter]
-    fn ttft_p90(&self) -> f64 { self.inner.ttft.p90 }
+    fn ttft_p90(&self) -> f64 {
+        self.inner.ttft.p90
+    }
     #[getter]
-    fn ttft_p95(&self) -> f64 { self.inner.ttft.p95 }
+    fn ttft_p95(&self) -> f64 {
+        self.inner.ttft.p95
+    }
     #[getter]
-    fn ttft_min(&self) -> f64 { self.inner.ttft.min }
+    fn ttft_min(&self) -> f64 {
+        self.inner.ttft.min
+    }
     #[getter]
-    fn ttft_max(&self) -> f64 { self.inner.ttft.max }
+    fn ttft_max(&self) -> f64 {
+        self.inner.ttft.max
+    }
     #[getter]
-    fn ttft_mean(&self) -> f64 { self.inner.ttft.mean }
+    fn ttft_mean(&self) -> f64 {
+        self.inner.ttft.mean
+    }
 
     // --- TBT percentiles ---
     #[getter]
-    fn tbt_p50(&self) -> f64 { self.inner.tbt.p50 }
+    fn tbt_p50(&self) -> f64 {
+        self.inner.tbt.p50
+    }
     #[getter]
-    fn tbt_p75(&self) -> f64 { self.inner.tbt.p75 }
+    fn tbt_p75(&self) -> f64 {
+        self.inner.tbt.p75
+    }
     #[getter]
-    fn tbt_p90(&self) -> f64 { self.inner.tbt.p90 }
+    fn tbt_p90(&self) -> f64 {
+        self.inner.tbt.p90
+    }
     #[getter]
-    fn tbt_p95(&self) -> f64 { self.inner.tbt.p95 }
+    fn tbt_p95(&self) -> f64 {
+        self.inner.tbt.p95
+    }
     #[getter]
-    fn tbt_p99(&self) -> f64 { self.inner.tbt.p99 }
+    fn tbt_p99(&self) -> f64 {
+        self.inner.tbt.p99
+    }
     #[getter]
-    fn tbt_min(&self) -> f64 { self.inner.tbt.min }
+    fn tbt_min(&self) -> f64 {
+        self.inner.tbt.min
+    }
     #[getter]
-    fn tbt_max(&self) -> f64 { self.inner.tbt.max }
+    fn tbt_max(&self) -> f64 {
+        self.inner.tbt.max
+    }
     #[getter]
-    fn tbt_mean(&self) -> f64 { self.inner.tbt.mean }
+    fn tbt_mean(&self) -> f64 {
+        self.inner.tbt.mean
+    }
 
     // --- E2E additional percentiles ---
     #[getter]
-    fn e2e_p75(&self) -> f64 { self.inner.end_to_end_latency.p75 }
+    fn e2e_p75(&self) -> f64 {
+        self.inner.end_to_end_latency.p75
+    }
     #[getter]
-    fn e2e_p90(&self) -> f64 { self.inner.end_to_end_latency.p90 }
+    fn e2e_p90(&self) -> f64 {
+        self.inner.end_to_end_latency.p90
+    }
     #[getter]
-    fn e2e_p95(&self) -> f64 { self.inner.end_to_end_latency.p95 }
+    fn e2e_p95(&self) -> f64 {
+        self.inner.end_to_end_latency.p95
+    }
     #[getter]
-    fn e2e_min(&self) -> f64 { self.inner.end_to_end_latency.min }
+    fn e2e_min(&self) -> f64 {
+        self.inner.end_to_end_latency.min
+    }
     #[getter]
-    fn e2e_max(&self) -> f64 { self.inner.end_to_end_latency.max }
+    fn e2e_max(&self) -> f64 {
+        self.inner.end_to_end_latency.max
+    }
     #[getter]
-    fn e2e_mean(&self) -> f64 { self.inner.end_to_end_latency.mean }
+    fn e2e_mean(&self) -> f64 {
+        self.inner.end_to_end_latency.mean
+    }
 
     // --- Queue wait percentiles ---
     #[getter]
-    fn queue_wait_p50(&self) -> f64 { self.inner.queue_wait.p50 }
+    fn queue_wait_p50(&self) -> f64 {
+        self.inner.queue_wait.p50
+    }
     #[getter]
-    fn queue_wait_p75(&self) -> f64 { self.inner.queue_wait.p75 }
+    fn queue_wait_p75(&self) -> f64 {
+        self.inner.queue_wait.p75
+    }
     #[getter]
-    fn queue_wait_p90(&self) -> f64 { self.inner.queue_wait.p90 }
+    fn queue_wait_p90(&self) -> f64 {
+        self.inner.queue_wait.p90
+    }
     #[getter]
-    fn queue_wait_p95(&self) -> f64 { self.inner.queue_wait.p95 }
+    fn queue_wait_p95(&self) -> f64 {
+        self.inner.queue_wait.p95
+    }
     #[getter]
-    fn queue_wait_p99(&self) -> f64 { self.inner.queue_wait.p99 }
+    fn queue_wait_p99(&self) -> f64 {
+        self.inner.queue_wait.p99
+    }
     #[getter]
-    fn queue_wait_min(&self) -> f64 { self.inner.queue_wait.min }
+    fn queue_wait_min(&self) -> f64 {
+        self.inner.queue_wait.min
+    }
     #[getter]
-    fn queue_wait_max(&self) -> f64 { self.inner.queue_wait.max }
+    fn queue_wait_max(&self) -> f64 {
+        self.inner.queue_wait.max
+    }
     #[getter]
-    fn queue_wait_mean(&self) -> f64 { self.inner.queue_wait.mean }
+    fn queue_wait_mean(&self) -> f64 {
+        self.inner.queue_wait.mean
+    }
 
     // --- Throughput ---
     #[getter]
-    fn prompt_tokens_per_sec(&self) -> f64 { self.inner.prompt_tokens_per_sec }
+    fn prompt_tokens_per_sec(&self) -> f64 {
+        self.inner.prompt_tokens_per_sec
+    }
     #[getter]
-    fn gen_tokens_per_sec(&self) -> f64 { self.inner.gen_tokens_per_sec }
+    fn gen_tokens_per_sec(&self) -> f64 {
+        self.inner.gen_tokens_per_sec
+    }
 
     // --- Fairness ---
     #[getter]
-    fn load_cv(&self) -> f64 { self.inner.load_cv }
+    fn load_cv(&self) -> f64 {
+        self.inner.load_cv
+    }
     #[getter]
-    fn max_min_queue_ratio(&self) -> f64 { self.inner.max_min_queue_ratio }
+    fn max_min_queue_ratio(&self) -> f64 {
+        self.inner.max_min_queue_ratio
+    }
 
     // --- Cost ---
     #[getter]
-    fn gpu_seconds_per_request(&self) -> f64 { self.inner.gpu_seconds_per_request }
+    fn gpu_seconds_per_request(&self) -> f64 {
+        self.inner.gpu_seconds_per_request
+    }
     #[getter]
-    fn estimated_cost_per_1k_tokens(&self) -> f64 { self.inner.estimated_cost_per_1k_tokens }
+    fn estimated_cost_per_1k_tokens(&self) -> f64 {
+        self.inner.estimated_cost_per_1k_tokens
+    }
 
     // --- Custom metrics ---
     #[getter]
-    fn custom_metrics(&self) -> HashMap<String, f64> { self.inner.custom_metrics.clone() }
+    fn custom_metrics(&self) -> HashMap<String, f64> {
+        self.inner.custom_metrics.clone()
+    }
 
     /// Pretty-print a summary table.
     fn summary(&self) -> String {
@@ -357,7 +427,10 @@ impl routesim_algorithms::RoutingAlgorithm for PyAlgorithmWrapper {
             match py_obj.call_method1(py, "route", (py_request, py_backends, clock_ms)) {
                 Ok(result) => {
                     // Try extracting backend_id from a Route object
-                    if let Ok(bid) = result.getattr(py, "backend_id").and_then(|a| a.extract::<u32>(py)) {
+                    if let Ok(bid) = result
+                        .getattr(py, "backend_id")
+                        .and_then(|a| a.extract::<u32>(py))
+                    {
                         routesim_algorithms::RoutingDecision::Route(bid)
                     // Also accept a plain integer
                     } else if let Ok(bid) = result.extract::<u32>(py) {
@@ -429,9 +502,7 @@ impl routesim_algorithms::RoutingAlgorithm for PyAlgorithmWrapper {
                 .collect();
 
             if let Ok(py_backends) = py_backends {
-                if let Err(e) =
-                    py_obj.call_method1(py, "on_event", (py_event, py_backends))
-                {
+                if let Err(e) = py_obj.call_method1(py, "on_event", (py_event, py_backends)) {
                     eprintln!("Python on_event() raised exception: {e}");
                 }
             }
@@ -461,7 +532,12 @@ impl routesim_algorithms::RoutingAlgorithm for PyAlgorithmWrapper {
 
 /// Run a simulation with a named algorithm or a Python Algorithm object.
 #[pyfunction]
-fn run(py: Python<'_>, config: &str, trace: &str, algorithm: &Bound<'_, PyAny>) -> PyResult<Results> {
+fn run(
+    py: Python<'_>,
+    config: &str,
+    trace: &str,
+    algorithm: &Bound<'_, PyAny>,
+) -> PyResult<Results> {
     let sim_config = SimConfig::from_file(std::path::Path::new(config))
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
